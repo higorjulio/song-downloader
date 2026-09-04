@@ -1,3 +1,4 @@
+import threading
 import uuid
 from pathlib import Path
 
@@ -11,6 +12,16 @@ router = APIRouter(prefix="/download", tags=["download"])
 DOWNLOAD_DIR = Path(__file__).parent.parent / "downloads"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+#DELETAR DOWNLOAD APOS 10M
+FILE_TTL_SECONDS = 10 * 60
+
+def delete_file_after(file_path: Path, delay_seconds: int) -> None:
+    def delete():
+        if(file_path.exists()):
+            file_path.unlink()
+    timer = threading.Timer(delay_seconds, delete)
+    timer.daemon = True
+    timer.start()
 
 class DownloadRequest(BaseModel):
     url: str
@@ -46,4 +57,5 @@ def download(payload: DownloadRequest):
         raise HTTPException(status_code=500, detail="Arquivo não foi gerado")
 
     filename = f"{info.get('title', 'audio')}.mp3"
+    delete_file_after(final_path, FILE_TTL_SECONDS)
     return FileResponse(final_path, media_type="audio/mpeg", filename=filename)
