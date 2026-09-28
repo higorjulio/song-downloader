@@ -1,75 +1,98 @@
-import threading
+import re
 import uuid
+import zipfile
 from pathlib import Path
 
-import yt_dlp
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from services import metadata as metadata_service
-from services import tagger
+from services.downloader import (
+    download_track,
+    tag_track,
+    extract_playlist_entries,
+    DOWNLOAD_DIR,
+)
+from services.cleanup import delete_file_later
 
 router = APIRouter(prefix="/download", tags=["download"])
 
-DOWNLOAD_DIR = Path(__file__).resolve().parent.parent / "downloads"
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-#DELETAR DOWNLOAD APOS 10M
-FILE_TTL_SECONDS = 10 * 60  # 10 minutos
-
-
-def delete_file_later(file_path: Path, delay_seconds: int) -> None:
-
-    def _delete():
-        if file_path.exists():
-            file_path.unlink()
-
-    timer = threading.Timer(delay_seconds, _delete)
-    timer.daemon = True
-    timer.start()
 
 class DownloadRequest(BaseModel):
     url: str
 
 
+def _safe_filename(name: str) -> str:
+    return re.sub(r'[\\/:*?"<>|]', "", name).strip() or "audio"
+
+
 @router.post("")
 def download(payload: DownloadRequest):
-    file_id = str(uuid.uuid4())
-    output_template = str(DOWNLOAD_DIR / f"{file_id}.%(ext)s")
-
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": output_template,
-        "quiet": True,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "320",
-            }
-        ],
-    }
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(payload.url, download=True)
+        entries = extract_playlist_entries(payload.url)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Erro ao baixar: {e}")
+        raise HTTPException(status_code=400, detail=f"Error trying to read link: {e}")
 
-    final_path = DOWNLOAD_DIR / f"{file_id}.mp3"
+    if not entries:
+        raise HTTPException(status_code=400, detail="No content found")
 
-    if not final_path.exists():
-        raise HTTPException(status_code=500, detail="Arquivo não foi gerado")
+    if len(entries) == 1:
+        return _download_single(entries[0]["url"])
 
-    video_title = info.get("title", "")
-    channel_name = info.get("uploader", "") or info.get("channel", "")
-    found_metadata = metadata_service.find_metadata(video_title, artist_hint=channel_name)
-    if found_metadata:
-        tagger.apply_tags(final_path, found_metadata)
+    return _download_playlist(entries)
+
+
+def _download_single(url: str) -> FileResponse:
+    try:
+        file_path, info = download_track(url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error: {e}")
+
+    tag_track(file_path, info)
 
     filename = f"{info.get('title', 'audio')}.mp3"
+    delete_file_later(file_path)
 
-    delete_file_later(final_path, FILE_TTL_SECONDS)
+    return FileResponse(file_path, media_type="audio/mpeg", filename=filename)
 
-    return FileResponse(final_path, media_type="audio/mpeg", filename=filename)
+
+def _download_playlist(entries: list[dict]) -> FileResponse:
+    downloaded_files: list[tuple[Path, str]] = []
+    failed_tracks: list[str] = []
+
+    for entry in entries:
+        try:
+            file_path, info = download_track(entry["url"])
+            tag_track(file_path, info)
+            title = info.get("title") or entry.get("title") or file_path.stem
+            downloaded_files.append((file_path, title))
+        except Exception:
+            failed_tracks.append(entry.get("title") or entry["url"])
+            continue
+
+    if not downloaded_files:
+        raise HTTPException(status_code=400, detail="No tracks could be downloaded successfully")
+
+    zip_id = str(uuid.uuid4())
+    zip_path = DOWNLOAD_DIR / f"{zip_id}.zip"
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+        used_names: set[str] = set()
+        for file_path, title in downloaded_files:
+            name = _safe_filename(title) + ".mp3"
+            base_name = name
+            counter = 1
+            while name in used_names:
+                name = f"{Path(base_name).stem} ({counter}).mp3"
+                counter += 1
+            used_names.add(name)
+
+            zf.write(file_path, arcname=name)
+
+        #delete each file after adding to zip
+        for file_path, _ in downloaded_files:
+            file_path.unlink(missing_ok=True)
+
+    delete_file_later(zip_path)
+
+    return FileResponse(zip_path, media_type="application/zip", filename="playlist.zip")

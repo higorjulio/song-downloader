@@ -26,7 +26,7 @@ def apply_tags(file_path: Path, metadata: dict) -> None:
     if cover_url:
         _embed_cover(tags, cover_url)
 
-    # v2_version=3 força ID3v2.3 em vez do padrão v2.4 do mutagen. O windows nao exibe capas na versao 2.4
+    #forces ID3v2.3 tags to be written, which is widely supported by most players
     tags.save(file_path, v2_version=3)
 
 
@@ -39,7 +39,7 @@ def _embed_cover(tags: ID3, cover_url: str) -> None:
     tags["APIC"] = APIC(
         encoding=3,
         mime=content_type,
-        type=3,  # capa de álbum (front cover)
+        type=3,  # cover (front)
         desc="Cover",
         data=resp.content,
     )
