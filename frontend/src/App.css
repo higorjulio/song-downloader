@@ -51,6 +51,40 @@ h1 {
   cursor: not-allowed;
 }
 
+.progress-box {
+  margin-top: 2rem;
+  text-align: left;
+}
+
+.progress-label {
+  font-size: 0.9rem;
+  color: #ccc;
+  margin-bottom: 0.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: #2a2a2a;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: #646cff;
+  transition: width 0.2s ease;
+}
+
+.progress-sub {
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 0.4rem;
+}
+
 .error {
   margin-top: 1rem;
   color: #ff6b6b;
