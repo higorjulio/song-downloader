@@ -5,7 +5,9 @@ from pathlib import Path
 FILE_TTL_SECONDS = 10 * 60
 
 
-def delete_file_later(file_path: Path, delay_seconds: int = FILE_TTL_SECONDS) -> None:
+def delete_file_later(file_path: Path | str, delay_seconds: int = FILE_TTL_SECONDS) -> None:
+
+    file_path = Path(file_path)
 
     def _delete():
         if file_path.exists():
